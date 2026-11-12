@@ -6,8 +6,21 @@ from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
+from pydantic import BaseModel, Field
 
 load_dotenv()
+
+
+class SearchSummary(BaseModel):
+    """Structured summary of a web search."""
+
+    answer: str = Field(description="A concise answer to the user's question")
+    key_points: list[str] = Field(
+        description="Important facts from the search results"
+    )
+    sources: list[str] = Field(
+        description="Source URLs taken from the provided search results"
+    )
 
 
 @tool
@@ -30,13 +43,18 @@ def main() -> None:
         model=os.getenv("OLLAMA_MODEL", "gemma3:270m"),
         temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0")),
     )
+    structured_model = model.with_structured_output(
+        SearchSummary,
+        method="json_schema",
+    )
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
                 "Answer the user's question using the web search results below. "
-                "Be concise, and say when the results do not contain enough "
-                "information.",
+                "Do not invent facts or source URLs. If the results are "
+                "insufficient, say so in the answer and use an empty "
+                "key_points list when appropriate.",
             ),
             (
                 "human",
@@ -44,7 +62,7 @@ def main() -> None:
             ),
         ]
     )
-    chain = prompt | model
+    chain = prompt | structured_model
 
     query = input("What would you like to search for? ").strip()
     if not query:
@@ -56,8 +74,10 @@ def main() -> None:
         search_results = web_search.invoke({"query": query})
     except DDGSException as error:
         print(f"\nDuckDuckGo search failed: {error}")
-        print("Check your internet connection or try a more specific query, "
-              "such as 'current weather in Bangalore India'.")
+        print(
+            "Check your internet connection or try a more specific query, "
+            "such as 'current weather in Bangalore India'."
+        )
         return
 
     print("\n[Tool results]")
@@ -66,7 +86,7 @@ def main() -> None:
     response = chain.invoke({"query": query, "search_results": search_results})
 
     print("\n[Final answer]")
-    print(response.content)
+    print(response.model_dump_json(indent=2))
 
 
 # Not yet worked on: OpenAI + Tavily agent example.
